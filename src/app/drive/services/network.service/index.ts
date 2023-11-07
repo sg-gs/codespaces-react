@@ -6,8 +6,9 @@ import { UserSettings } from '@internxt/sdk/dist/shared/types/userSettings';
 import { TeamsSettings } from '../../../teams/types';
 import { uploadFile } from 'app/network/upload';
 import { Abortable } from 'app/network/Abortable';
+import { createUploadWebWorker } from '../../../../WebWorker';
 
-export const MAX_ALLOWED_UPLOAD_SIZE = 10 * 1024 * 1024 * 1024;
+export const MAX_ALLOWED_UPLOAD_SIZE = 20 * 1024 * 1024 * 1024;
 
 type ProgressCallback = (progress: number, uploadedBytes: number | null, totalBytes: number | null) => void;
 interface IUploadParams {
@@ -85,16 +86,33 @@ export class Network {
 
     const abortController = new AbortController();
 
+    const worker: Worker = createUploadWebWorker();
+    const payload: Omit<IUploadParams, 'progressCallback'> & { creds: any, mnemonic: string } = {
+      filecontent: params.filecontent,
+      filesize: params.filesize,
+      creds: this.creds,
+      mnemonic: this.mnemonic,
+    };
+    worker.postMessage({bucketId, params: payload, type: 'upload'});
     return [
-      uploadFile(bucketId, {
-        ...params,
-        ...{
-          progressCallback: (totalBytes, uploadedBytes) => {
-            params.progressCallback(uploadedBytes / totalBytes, totalBytes, uploadedBytes);
-          },
-        },
-        creds: this.creds,
-        mnemonic: this.mnemonic,
+      new Promise((resolve, reject) => {
+        worker.addEventListener('error', reject);
+        worker.addEventListener('message', (msg) => {
+          console.log('[MAIN_THREAD]: Message received from worker', msg);
+          if (msg.data.progress) {
+            params.progressCallback(
+              msg.data.progress, 
+              msg.data.uploadedBytes,
+              msg.data.totalBytes
+            );
+          } else if (msg.data.result === 'success') {
+            resolve(msg.data.fileId);
+          } else if (msg.data.result === 'error') {
+            reject(msg.data.error);
+          } else {
+            console.warn('[MAIN_THREAD]: Received unknown message from worker')
+          }
+        });
       }),
       {
         abort: () => abortController.abort(),

@@ -9,7 +9,7 @@ import { getEnvironmentConfig } from '../network.service';
 import { encryptFilename } from '../../../crypto/services/utils';
 import errorService from '../../../core/services/error.service';
 import { SdkFactory } from '../../../core/factory/sdk';
-import { uploadFile as uploadToBucket } from 'app/network/upload';
+import { Network } from 'app/drive/services/network.service';
 import notificationsService, { ToastType } from '../../../notifications/services/notifications.service';
 import { generateThumbnailFromFile } from '../thumbnail.service';
 
@@ -70,19 +70,15 @@ export async function uploadFile(
       throw new Error('Bucket not found!');
     }
 
-    const fileId = await uploadToBucket(bucketId, {
-      creds: {
-        pass: bridgePass,
-        user: bridgeUser,
-      },
+    const [promise, abort] = await new Network(bridgeUser, bridgePass, encryptionKey).uploadFile(bucketId, {
       filecontent: file.content,
       filesize: file.size,
-      mnemonic: encryptionKey,
       progressCallback: (totalBytes, uploadedBytes) => {
-        updateProgressCallback(uploadedBytes / totalBytes);
+        updateProgressCallback(uploadedBytes as number / totalBytes);
       },
-      abortController,
     });
+
+    const fileId = await promise;
 
     const name = encryptFilename(file.name, file.parentFolderId);
 
